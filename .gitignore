@@ -1,0 +1,8 @@
+.env
+.env.*
+*.pem
+.supabase
+node_modules
+
+SJ_Self_Hosted_GitHub_PR_Security_Gate.docx
+chat-summary.md
