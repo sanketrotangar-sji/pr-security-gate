@@ -1,0 +1,5 @@
+# Personal v1: one Edge Function, no database.
+project_id = "pr-security-gate"
+
+[functions.github-pr-gate]
+verify_jwt = false
