@@ -7,3 +7,4 @@ A Supabase Edge Function receives GitHub App webhooks, scans the PR head commit,
 Webhook:
 
 `https://icfajfdzwvrldygtfhig.supabase.co/functions/v1/github-pr-gate`
+Pilot stub so the v1 PR gate can require this file.
