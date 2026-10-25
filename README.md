@@ -1,8 +1,8 @@
 # pr-security-gate
 
-Personal v1 GitHub PR security gate.
+Personal GitHub PR security gate.
 
-A Supabase Edge Function receives GitHub App webhooks, scans the PR head commit, and publishes a check named **SJ Standards Gate**. A repo ruleset on `main` is the merge lock.
+A Supabase Edge Function receives GitHub App webhooks, scans the PR head commit (standards + pinned Gitleaks-class secret rules), and publishes a check named **SJ Standards Gate**. A repo ruleset on `main` is the merge lock.
 
 Webhook:
 

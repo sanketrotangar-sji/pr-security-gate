@@ -5,7 +5,7 @@ Ticket:
 <!-- What does this PR change? -->
 
 ## AI-assisted
-AI-assisted: yes/no
+AI-assisted: yes
 
 ## Checklist
 - [ ] I tested this change
