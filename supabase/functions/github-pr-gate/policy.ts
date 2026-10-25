@@ -1,19 +1,20 @@
 import {
   BRANCH_PATTERN,
   MAX_FILE_BYTES,
+  PROTECTED_BASE_BRANCH,
   REQUIRED_FILES,
   SKIP_EXTENSIONS,
   SKIP_FILE_NAMES,
   SKIP_PATH_PREFIXES,
+  STANDARDS_FILE_PATH,
+  STANDARDS_FILE_SHA256,
 } from "./config.ts";
 import type { GitHubClient } from "./github.ts";
+import { scanTextForSecrets } from "./secrets/engine.ts";
+import type { Finding } from "./types.ts";
 
-export type Finding = {
-  rule: string;
-  message: string;
-  path?: string;
-  line?: number;
-};
+export type { Finding } from "./types.ts";
+export { scanTextForSecrets } from "./secrets/engine.ts";
 
 export type PolicyResult = {
   findings: Finding[];
@@ -22,7 +23,6 @@ export type PolicyResult = {
 type PullFile = {
   filename: string;
   status: string;
-  size?: number;
 };
 
 type GitTree = {
@@ -37,21 +37,6 @@ type FileContent = {
   size?: number;
 };
 
-const SECRET_RULES: Array<{ rule: string; pattern: RegExp }> = [
-  { rule: "github-pat", pattern: /\bghp_[A-Za-z0-9]{36}\b/ },
-  { rule: "stripe-live-key", pattern: /\bsk_live_[A-Za-z0-9]{16,}\b/ },
-  { rule: "aws-access-key", pattern: /\bAKIA[0-9A-Z]{16}\b/ },
-  {
-    rule: "slack-token",
-    pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
-  },
-  {
-    rule: "generic-api-key",
-    pattern:
-      /\b(?:api[_-]?key|secret|token|password)\b\s*[:=]\s*['"][A-Za-z0-9/_+=.-]{16,}['"]/i,
-  },
-];
-
 const EMPTY_TICKET = new Set(["tbd", "todo", "n/a", "-", "none", "xxx"]);
 
 export async function runPolicy(
@@ -62,14 +47,24 @@ export async function runPolicy(
     prNumber: number;
     headSha: string;
     branch: string;
+    baseRef: string;
     body: string | null;
   },
 ): Promise<PolicyResult> {
   const findings: Finding[] = [];
   findings.push(...checkBranchName(input.branch));
+  findings.push(...checkMergeDirection(input.baseRef));
   findings.push(...checkPullRequestBody(input.body ?? ""));
   findings.push(
     ...(await checkRequiredFiles(
+      github,
+      input.owner,
+      input.repo,
+      input.headSha,
+    )),
+  );
+  findings.push(
+    ...(await checkStandardsHash(
       github,
       input.owner,
       input.repo,
@@ -97,6 +92,14 @@ export function checkBranchName(branch: string): Finding[] {
   }];
 }
 
+export function checkMergeDirection(baseRef: string): Finding[] {
+  if (baseRef === PROTECTED_BASE_BRANCH) return [];
+  return [{
+    rule: "merge-direction",
+    message: `PRs must target ${PROTECTED_BASE_BRANCH}, not "${baseRef}".`,
+  }];
+}
+
 export function checkPullRequestBody(body: string): Finding[] {
   const findings: Finding[] = [];
   const ticket = body.match(/^\s*Ticket:\s*(.+?)\s*$/im);
@@ -105,6 +108,15 @@ export function checkPullRequestBody(body: string): Finding[] {
     findings.push({
       rule: "pr-ticket",
       message: "PR body must include a filled Ticket: field.",
+    });
+  }
+
+  const ai = body.match(/^\s*AI-assisted:\s*(.+?)\s*$/im);
+  const aiValue = ai?.[1]?.trim().toLowerCase() ?? "";
+  if (aiValue !== "yes" && aiValue !== "no") {
+    findings.push({
+      rule: "pr-ai-assisted",
+      message: "PR body must include AI-assisted: yes or AI-assisted: no.",
     });
   }
 
@@ -122,26 +134,6 @@ export function checkPullRequestBody(body: string): Finding[] {
       rule: "pr-checklist",
       message: `PR checklist has ${unchecked} unchecked item(s).`,
     });
-  }
-  return findings;
-}
-
-export function scanTextForSecrets(path: string, text: string): Finding[] {
-  const findings: Finding[] = [];
-  const lines = text.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    for (const { rule, pattern } of SECRET_RULES) {
-      pattern.lastIndex = 0;
-      if (pattern.test(line)) {
-        findings.push({
-          rule,
-          path,
-          line: i + 1,
-          message: `Possible secret detected in ${path}:${i + 1}.`,
-        });
-      }
-    }
   }
   return findings;
 }
@@ -176,6 +168,30 @@ async function checkRequiredFiles(
     path,
     message: `Required file missing: ${path}`,
   }));
+}
+
+async function checkStandardsHash(
+  github: GitHubClient,
+  owner: string,
+  repo: string,
+  headSha: string,
+): Promise<Finding[]> {
+  const content = await readFileText(
+    github,
+    owner,
+    repo,
+    STANDARDS_FILE_PATH,
+    headSha,
+  );
+  if (content == null) return [];
+  const digest = await sha256Hex(content);
+  if (digest === STANDARDS_FILE_SHA256) return [];
+  return [{
+    rule: "standards-hash",
+    path: STANDARDS_FILE_PATH,
+    message:
+      "Standards file does not match the approved hash pinned in the gate.",
+  }];
 }
 
 async function scanPullRequestFiles(
@@ -279,9 +295,19 @@ function decodeBase64(content: string): string {
   return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
 }
 
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text),
+  );
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export function formatFindings(findings: Finding[]): string {
   if (findings.length === 0) {
-    return "Branch name, PR template, required files, and regex secret scan passed.";
+    return "Branch name, PR template, required files, and secret scan passed.";
   }
   return findings.map((finding) => {
     const loc = finding.path

@@ -1,3 +1,14 @@
+export function normalizeWebhookSecret(value: string): string {
+  let secret = value.trim();
+  if (
+    (secret.startsWith('"') && secret.endsWith('"')) ||
+    (secret.startsWith("'") && secret.endsWith("'"))
+  ) {
+    secret = secret.slice(1, -1);
+  }
+  return secret.replace(/\\n/g, "").trim();
+}
+
 export async function verifyGithubSignature(
   rawBody: string,
   signatureHeader: string | null,
